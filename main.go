@@ -15,14 +15,6 @@ type Matrix [][]float64
 
 func (v Vector) Copy() Vector { c := make(Vector, len(v)); copy(c, v); return c }
 func Zeros(n int) Vector      { return make(Vector, n) }
-func Eye(n int) Matrix {
-	m := make(Matrix, n)
-	for i := range m {
-		m[i] = make([]float64, n)
-		m[i][i] = 1
-	}
-	return m
-}
 func (v Vector) Add(u Vector) {
 	for i := range v {
 		v[i] += u[i]
@@ -44,10 +36,6 @@ func Dot(a, b Vector) float64 {
 		s += a[i] * b[i]
 	}
 	return s
-}
-func MatTMat(m Matrix) Matrix { // M^T * M
-	t := Transpose(m)
-	return MatMul(t, m)
 }
 func MatVec(m Matrix, x Vector) Vector {
 	y := make(Vector, len(m))
