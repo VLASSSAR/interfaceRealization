@@ -10,35 +10,35 @@ import (
 
 /********** БАЗОВЫЕ ТИПЫ **********/
 
-type Vector []float64
+type IVector []float64
 type Matrix [][]float64
 
-func (v Vector) Copy() Vector { c := make(Vector, len(v)); copy(c, v); return c }
-func Zeros(n int) Vector      { return make(Vector, n) }
-func (v Vector) Add(u Vector) {
+func (v IVector) Copy() IVector { c := make(IVector, len(v)); copy(c, v); return c }
+func Zeros(n int) IVector       { return make(IVector, n) }
+func (v IVector) Add(u IVector) {
 	for i := range v {
 		v[i] += u[i]
 	}
 }
-func (v Vector) Sub(u Vector) {
+func (v IVector) Sub(u IVector) {
 	for i := range v {
 		v[i] -= u[i]
 	}
 }
-func (v Vector) Scale(a float64) {
+func (v IVector) Scale(a float64) {
 	for i := range v {
 		v[i] *= a
 	}
 }
-func Dot(a, b Vector) float64 {
+func Dot(a, b IVector) float64 {
 	s := 0.0
 	for i := range a {
 		s += a[i] * b[i]
 	}
 	return s
 }
-func MatVec(m Matrix, x Vector) Vector {
-	y := make(Vector, len(m))
+func MatVec(m Matrix, x IVector) IVector {
+	y := make(IVector, len(m))
 	for i := range m {
 		s := 0.0
 		for j := range m[i] {
@@ -76,7 +76,7 @@ func Transpose(a Matrix) Matrix {
 }
 
 // Решение A x = b
-func Solve(A Matrix, b Vector) (Vector, error) {
+func Solve(A Matrix, b IVector) (IVector, error) {
 	n := len(A)
 	M := make(Matrix, n)
 	for i := range M {
@@ -114,7 +114,7 @@ func Solve(A Matrix, b Vector) (Vector, error) {
 			}
 		}
 	}
-	x := make(Vector, n)
+	x := make(IVector, n)
 	for i := 0; i < n; i++ {
 		x[i] = M[i][n]
 	}
@@ -125,14 +125,14 @@ func Solve(A Matrix, b Vector) (Vector, error) {
 
 // Functions
 type IParametricFunction interface {
-	Bind(params Vector) IFunction
+	Bind(params IVector) IFunction
 }
 type IFunction interface {
-	Value(x Vector) float64
+	Value(x IVector) float64
 }
 type IDifferentiableFunction interface {
 	IFunction
-	Gradient(x Vector) Vector
+	Gradient(x IVector) IVector
 }
 
 // Functionals
@@ -141,17 +141,17 @@ type IFunctional interface {
 }
 type DifferentiableFunctional interface {
 	IFunctional
-	Gradient(f IDifferentiableFunction) Vector
+	Gradient(f IDifferentiableFunction) IVector
 }
 type ILeastSquaresFunctional interface {
 	IFunctional
-	Residual(f IFunction) Vector
+	Residual(f IFunction) IVector
 	Jacobian(f IDifferentiableFunction) Matrix
 }
 
 // Оптимизатор
 type IOptimizator interface {
-	Minimize(obj IFunctional, fn IParametricFunction, initial Vector, min, max Vector) Vector
+	Minimize(obj IFunctional, fn IParametricFunction, initial IVector, min, max IVector) IVector
 }
 
 /********** ФУНКЦИИ **********/
@@ -160,15 +160,15 @@ type IOptimizator interface {
 type LinearN struct {
 	n int
 }
-type boundLinear struct{ theta Vector }        // [w..., b]
-func (p LinearN) Bind(params Vector) IFunction { return &boundLinear{theta: params.Copy()} }
-func (b *boundLinear) Value(x Vector) float64 {
+type boundLinear struct{ theta IVector }        // [w..., b]
+func (p LinearN) Bind(params IVector) IFunction { return &boundLinear{theta: params.Copy()} }
+func (b *boundLinear) Value(x IVector) float64 {
 	w := b.theta[:len(b.theta)-1]
 	bias := b.theta[len(b.theta)-1]
 	return Dot(w, x) + bias
 }
-func (b *boundLinear) Gradient(x Vector) Vector {
-	g := make(Vector, len(b.theta))
+func (b *boundLinear) Gradient(x IVector) IVector {
+	g := make(IVector, len(b.theta))
 	copy(g, x)
 	g[len(g)-1] = 1.0 // ∂f/∂b
 	return g
@@ -178,9 +178,9 @@ func (b *boundLinear) Gradient(x Vector) Vector {
 type Poly1D struct {
 	deg int
 }
-type boundPoly struct{ a Vector }             // a0..an
-func (p Poly1D) Bind(params Vector) IFunction { return &boundPoly{a: params.Copy()} }
-func (b *boundPoly) Value(x Vector) float64 {
+type boundPoly struct{ a IVector }             // a0..an
+func (p Poly1D) Bind(params IVector) IFunction { return &boundPoly{a: params.Copy()} }
+func (b *boundPoly) Value(x IVector) float64 {
 	x1 := x[0]
 	pwr := 1.0
 	s := 0.0
@@ -193,18 +193,18 @@ func (b *boundPoly) Value(x Vector) float64 {
 
 // 3) Кусочно-линейная функция
 type PiecewiseLinear1D struct {
-	knots Vector // фиксированные x-узлы
+	knots IVector // фиксированные x-узлы
 }
 type boundPWL struct {
-	knots Vector
-	y     Vector // параметры (значения в узлах)
+	knots IVector
+	y     IVector // параметры (значения в узлах)
 }
 
-func (p PiecewiseLinear1D) Bind(params Vector) IFunction {
+func (p PiecewiseLinear1D) Bind(params IVector) IFunction {
 	// предполагаем, что len(params)==len(knots)
 	return &boundPWL{knots: p.knots, y: params.Copy()}
 }
-func (b *boundPWL) Value(x Vector) float64 {
+func (b *boundPWL) Value(x IVector) float64 {
 	xv := x[0]
 	// найдём отрезок [xi, xi+1]
 	i := 0
@@ -215,7 +215,7 @@ func (b *boundPWL) Value(x Vector) float64 {
 	t := (xv - x0) / (x1 - x0)
 	return (1-t)*b.y[i] + t*b.y[i+1]
 }
-func (b *boundPWL) Gradient(x Vector) Vector {
+func (b *boundPWL) Gradient(x IVector) IVector {
 	xv := x[0]
 	i := 0
 	for i < len(b.knots)-2 && xv > b.knots[i+1] {
@@ -223,7 +223,7 @@ func (b *boundPWL) Gradient(x Vector) Vector {
 	}
 	x0, x1 := b.knots[i], b.knots[i+1]
 	t := (xv - x0) / (x1 - x0)
-	g := make(Vector, len(b.y))
+	g := make(IVector, len(b.y))
 	g[i] = 1 - t
 	g[i+1] = t
 	return g
@@ -231,12 +231,12 @@ func (b *boundPWL) Gradient(x Vector) Vector {
 
 // 4) Кубический сплайн
 type CubicSpline1D struct {
-	knots Vector // x
+	knots IVector
 	coef  Matrix
 }
 type boundSpline struct{ sp CubicSpline1D }
 
-func (s CubicSpline1D) Bind(params Vector) IFunction {
+func (s CubicSpline1D) Bind(params IVector) IFunction {
 	n := len(s.knots)
 	y := params.Copy()
 	coef := make(Matrix, n-1)
@@ -246,13 +246,13 @@ func (s CubicSpline1D) Bind(params Vector) IFunction {
 		c1 := (y[i+1] - y[i]) / h
 		c2 := 0.0
 		c3 := 0.0
-		coef[i] = Vector{c0, c1, c2, c3}
+		coef[i] = IVector{c0, c1, c2, c3}
 	}
 	cp := s
 	cp.coef = coef
 	return &boundSpline{sp: cp}
 }
-func (b *boundSpline) Value(x Vector) float64 {
+func (b *boundSpline) Value(x IVector) float64 {
 	xv := x[0]
 	i := 0
 	for i < len(b.sp.knots)-2 && xv > b.sp.knots[i+1] {
@@ -267,8 +267,8 @@ func (b *boundSpline) Value(x Vector) float64 {
 
 // Набор точек (x_i, y_i)
 type Samples struct {
-	X []Vector
-	Y Vector
+	X []IVector
+	Y IVector
 }
 
 // L1
@@ -282,7 +282,7 @@ func (f L1Functional) Value(fn IFunction) float64 {
 	}
 	return s
 }
-func (f L1Functional) Gradient(fn IDifferentiableFunction) Vector {
+func (f L1Functional) Gradient(fn IDifferentiableFunction) IVector {
 	g := fn.Gradient(f.Data.X[0])
 	grad := Zeros(len(g))
 	for i := range f.Data.X {
@@ -312,7 +312,7 @@ func (f L2Functional) Value(fn IFunction) float64 {
 	}
 	return s
 }
-func (f L2Functional) Gradient(fn IDifferentiableFunction) Vector {
+func (f L2Functional) Gradient(fn IDifferentiableFunction) IVector {
 	grad := Zeros(len(fn.Gradient(f.Data.X[0])))
 	for i := range f.Data.X {
 		r := fn.Value(f.Data.X[i]) - f.Data.Y[i]
@@ -323,8 +323,8 @@ func (f L2Functional) Gradient(fn IDifferentiableFunction) Vector {
 	}
 	return grad
 }
-func (f L2Functional) Residual(fn IFunction) Vector {
-	r := make(Vector, len(f.Data.X))
+func (f L2Functional) Residual(fn IFunction) IVector {
+	r := make(IVector, len(f.Data.X))
 	for i := range f.Data.X {
 		r[i] = fn.Value(f.Data.X[i]) - f.Data.Y[i]
 	}
@@ -375,7 +375,7 @@ func (f IntegralFunctional) Value(fn IFunction) float64 {
 		if i == 0 || i == f.N {
 			w = 0.5
 		}
-		sum += w * fn.Value(Vector{x})
+		sum += w * fn.Value(IVector{x})
 	}
 	return sum * h
 }
@@ -389,7 +389,7 @@ type Annealing struct {
 	Step float64
 }
 
-func (a Annealing) Minimize(obj IFunctional, pf IParametricFunction, initial Vector, min, max Vector) Vector {
+func (a Annealing) Minimize(obj IFunctional, pf IParametricFunction, initial IVector, min, max IVector) IVector {
 	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
 	theta := initial.Copy()
 	best := theta.Copy()
@@ -441,7 +441,7 @@ type GradDescent struct {
 	LR    float64
 }
 
-func (gd GradDescent) Minimize(obj IFunctional, pf IParametricFunction, initial Vector, min, max Vector) Vector {
+func (gd GradDescent) Minimize(obj IFunctional, pf IParametricFunction, initial IVector, min, max IVector) IVector {
 	df, ok := obj.(DifferentiableFunctional)
 	if !ok {
 		panic("GradDescent requires DifferentiableFunctional")
@@ -478,7 +478,7 @@ type GaussNewton struct {
 	Iters int
 }
 
-func (gn GaussNewton) Minimize(obj IFunctional, pf IParametricFunction, initial Vector, min, max Vector) Vector {
+func (gn GaussNewton) Minimize(obj IFunctional, pf IParametricFunction, initial IVector, min, max IVector) IVector {
 	ls, ok := obj.(ILeastSquaresFunctional)
 	if !ok {
 		panic("Gauss-Newton requires ILeastSquaresFunctional")
@@ -524,16 +524,16 @@ func (gn GaussNewton) Minimize(obj IFunctional, pf IParametricFunction, initial 
 
 func main() {
 	data := Samples{
-		X: []Vector{
+		X: []IVector{
 			{0, 0}, {1, 0}, {0, 1}, {2, -1}, {3, 2},
 		},
-		Y: Vector{1, 3, 0.5, 2*2 - 0.5*(-1) + 1, 2*3 - 0.5*2 + 1},
+		Y: IVector{1, 3, 0.5, 2*2 - 0.5*(-1) + 1, 2*3 - 0.5*2 + 1},
 	}
 
 	fn := LinearN{n: 2}
 	fL2 := L2Functional{Data: data}
 
-	initial := Vector{0, 0, 0}
+	initial := IVector{0, 0, 0}
 	// 1) Гаусса-Ньютона
 	thetaGN := (GaussNewton{Iters: 20}).Minimize(fL2, fn, initial, nil, nil)
 	fmt.Printf("Gauss-Newton:  theta = %.5v,  L2 = %.6f\n", thetaGN, fL2.Value(fn.Bind(thetaGN)))
@@ -547,14 +547,14 @@ func main() {
 	fmt.Printf("Annealing:      theta = %.5v,  L2 = %.6f\n", thetaSA, fL2.Value(fn.Bind(thetaSA)))
 
 	// Пример кусочно-линейной аппроксимации 1D
-	knots := Vector{-1, 0, 1, 2}
+	knots := IVector{-1, 0, 1, 2}
 	pwl := PiecewiseLinear1D{knots: knots}
 	s1 := Samples{
-		X: []Vector{{-1}, {0}, {0.5}, {1.7}},
-		Y: Vector{-1, 0, 1, 2},
+		X: []IVector{{-1}, {0}, {0.5}, {1.7}},
+		Y: IVector{-1, 0, 1, 2},
 	}
 	l1 := L1Functional{Data: s1}
-	theta0 := Vector{0, 0, 0, 0}
+	theta0 := IVector{0, 0, 0, 0}
 	thetaPWL := (GradDescent{Iters: 1000, LR: 0.1}).Minimize(l1, pwl, theta0, nil, nil)
 	fmt.Printf("PWL L1 fit:     y(knots)=%.3v,  L1=%.6f\n", thetaPWL, l1.Value(pwl.Bind(thetaPWL)))
 }
