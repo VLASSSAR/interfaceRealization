@@ -75,7 +75,7 @@ func Transpose(a Matrix) Matrix {
 	return t
 }
 
-// Решение A x = b (простой Гаусс с частичным выбором)
+// Решение A x = b
 func Solve(A Matrix, b Vector) (Vector, error) {
 	n := len(A)
 	M := make(Matrix, n)
@@ -124,46 +124,44 @@ func Solve(A Matrix, b Vector) (Vector, error) {
 /********** ИНТЕРФЕЙСЫ **********/
 
 // Functions
-type ParametricFunction interface {
-	Bind(params Vector) Function
+type IParametricFunction interface {
+	Bind(params Vector) IFunction
 }
-type Function interface {
+type IFunction interface {
 	Value(x Vector) float64
 }
-type DifferentiableFunction interface {
-	Function
-	// ∂f(x)/∂θ  (градиент по параметрам исходной ParametricFunction)
+type IDifferentiableFunction interface {
+	IFunction
 	Gradient(x Vector) Vector
 }
 
 // Functionals
-type Functional interface {
-	Value(f Function) float64
+type IFunctional interface {
+	Value(f IFunction) float64
 }
 type DifferentiableFunctional interface {
-	Functional
-	// ∂J/∂θ для f, которая умеет ∂f/∂θ
-	Gradient(f DifferentiableFunction) Vector
+	IFunctional
+	Gradient(f IDifferentiableFunction) Vector
 }
-type LeastSquaresFunctional interface {
-	Functional
-	Residual(f Function) Vector
-	Jacobian(f DifferentiableFunction) Matrix // ∂r_i/∂θ
+type ILeastSquaresFunctional interface {
+	IFunctional
+	Residual(f IFunction) Vector
+	Jacobian(f IDifferentiableFunction) Matrix
 }
 
 // Оптимизатор
-type Optimizator interface {
-	Minimize(obj Functional, fn ParametricFunction, initial Vector, min, max Vector) Vector
+type IOptimizator interface {
+	Minimize(obj IFunctional, fn IParametricFunction, initial Vector, min, max Vector) Vector
 }
 
 /********** ФУНКЦИИ **********/
 
-// 1) Линейная в R^n: f(x)=w·x + b, параметры θ=[w,b]
+// 1) Линейная в n-мерном пространстве
 type LinearN struct {
 	n int
 }
-type boundLinear struct{ theta Vector }       // [w..., b]
-func (p LinearN) Bind(params Vector) Function { return &boundLinear{theta: params.Copy()} }
+type boundLinear struct{ theta Vector }        // [w..., b]
+func (p LinearN) Bind(params Vector) IFunction { return &boundLinear{theta: params.Copy()} }
 func (b *boundLinear) Value(x Vector) float64 {
 	w := b.theta[:len(b.theta)-1]
 	bias := b.theta[len(b.theta)-1]
@@ -176,12 +174,12 @@ func (b *boundLinear) Gradient(x Vector) Vector {
 	return g
 }
 
-// 2) Полином степени n в R¹: f(x)=Σ a_k x^k (НЕ DifferentiableFunction по заданию)
+// 2) Полином n-ой степени в одномерном пространстве
 type Poly1D struct {
 	deg int
 }
-type boundPoly struct{ a Vector }            // a0..an
-func (p Poly1D) Bind(params Vector) Function { return &boundPoly{a: params.Copy()} }
+type boundPoly struct{ a Vector }             // a0..an
+func (p Poly1D) Bind(params Vector) IFunction { return &boundPoly{a: params.Copy()} }
 func (b *boundPoly) Value(x Vector) float64 {
 	x1 := x[0]
 	pwr := 1.0
@@ -193,7 +191,7 @@ func (b *boundPoly) Value(x Vector) float64 {
 	return s
 }
 
-// 3) Кусочно-линейная 1D: узлы фиксированы, параметры — значения в узлах (DifferentiableFunction)
+// 3) Кусочно-линейная функция
 type PiecewiseLinear1D struct {
 	knots Vector // фиксированные x-узлы
 }
@@ -202,7 +200,7 @@ type boundPWL struct {
 	y     Vector // параметры (значения в узлах)
 }
 
-func (p PiecewiseLinear1D) Bind(params Vector) Function {
+func (p PiecewiseLinear1D) Bind(params Vector) IFunction {
 	// предполагаем, что len(params)==len(knots)
 	return &boundPWL{knots: p.knots, y: params.Copy()}
 }
@@ -231,23 +229,19 @@ func (b *boundPWL) Gradient(x Vector) Vector {
 	return g
 }
 
-// 4) Кубический сплайн 1D (для простоты: натянутые отрезки; только Value)
+// 4) Кубический сплайн
 type CubicSpline1D struct {
 	knots Vector // x
-	coef  Matrix // коэффициенты на каждом интервале [a,b]: c0+c1*h+c2*h^2+c3*h^3
+	coef  Matrix
 }
 type boundSpline struct{ sp CubicSpline1D }
 
-func (s CubicSpline1D) Bind(params Vector) Function {
-	// params — значения в узлах; коэффициенты считаем (натуральный сплайн)
+func (s CubicSpline1D) Bind(params Vector) IFunction {
 	n := len(s.knots)
 	y := params.Copy()
-	// простая C2-аппроксимация (здесь — “not-a-knot” упрощённо)
-	// Для краткости используем линейную интерполяцию и поднимаем до куба с нулевыми вторыми производными.
 	coef := make(Matrix, n-1)
 	for i := 0; i < n-1; i++ {
 		h := s.knots[i+1] - s.knots[i]
-		// Возьмём куб, совпадающий значениями и нулевыми втор.производными
 		c0 := y[i]
 		c1 := (y[i+1] - y[i]) / h
 		c2 := 0.0
@@ -277,10 +271,10 @@ type Samples struct {
 	Y Vector
 }
 
-// L1: sum |r_i|  (субградиент sign)
+// L1
 type L1Functional struct{ Data Samples }
 
-func (f L1Functional) Value(fn Function) float64 {
+func (f L1Functional) Value(fn IFunction) float64 {
 	s := 0.0
 	for i := range f.Data.X {
 		r := fn.Value(f.Data.X[i]) - f.Data.Y[i]
@@ -288,8 +282,7 @@ func (f L1Functional) Value(fn Function) float64 {
 	}
 	return s
 }
-func (f L1Functional) Gradient(fn DifferentiableFunction) Vector {
-	// θ-размер берём из градиента первого примера
+func (f L1Functional) Gradient(fn IDifferentiableFunction) Vector {
 	g := fn.Gradient(f.Data.X[0])
 	grad := Zeros(len(g))
 	for i := range f.Data.X {
@@ -299,7 +292,7 @@ func (f L1Functional) Gradient(fn DifferentiableFunction) Vector {
 			sign = 1
 		} else if r < 0 {
 			sign = -1
-		} // r==0 ⇒ 0 (субградиент)
+		}
 		gi := fn.Gradient(f.Data.X[i])
 		for j := range grad {
 			grad[j] += sign * gi[j]
@@ -308,10 +301,10 @@ func (f L1Functional) Gradient(fn DifferentiableFunction) Vector {
 	return grad
 }
 
-// L2: sum r_i^2  + LS-атрибуты
+// L2
 type L2Functional struct{ Data Samples }
 
-func (f L2Functional) Value(fn Function) float64 {
+func (f L2Functional) Value(fn IFunction) float64 {
 	s := 0.0
 	for i := range f.Data.X {
 		r := fn.Value(f.Data.X[i]) - f.Data.Y[i]
@@ -319,7 +312,7 @@ func (f L2Functional) Value(fn Function) float64 {
 	}
 	return s
 }
-func (f L2Functional) Gradient(fn DifferentiableFunction) Vector {
+func (f L2Functional) Gradient(fn IDifferentiableFunction) Vector {
 	grad := Zeros(len(fn.Gradient(f.Data.X[0])))
 	for i := range f.Data.X {
 		r := fn.Value(f.Data.X[i]) - f.Data.Y[i]
@@ -330,14 +323,14 @@ func (f L2Functional) Gradient(fn DifferentiableFunction) Vector {
 	}
 	return grad
 }
-func (f L2Functional) Residual(fn Function) Vector {
+func (f L2Functional) Residual(fn IFunction) Vector {
 	r := make(Vector, len(f.Data.X))
 	for i := range f.Data.X {
 		r[i] = fn.Value(f.Data.X[i]) - f.Data.Y[i]
 	}
 	return r
 }
-func (f L2Functional) Jacobian(fn DifferentiableFunction) Matrix {
+func (f L2Functional) Jacobian(fn IDifferentiableFunction) Matrix {
 	m := len(f.Data.X)
 	p := len(fn.Gradient(f.Data.X[0]))
 	J := make(Matrix, m)
@@ -350,10 +343,10 @@ func (f L2Functional) Jacobian(fn DifferentiableFunction) Matrix {
 	return J
 }
 
-// Linf: max |r_i|
+// Linf
 type LinfFunctional struct{ Data Samples }
 
-func (f LinfFunctional) Value(fn Function) float64 {
+func (f LinfFunctional) Value(fn IFunction) float64 {
 	mx := 0.0
 	for i := range f.Data.X {
 		r := math.Abs(fn.Value(f.Data.X[i]) - f.Data.Y[i])
@@ -364,13 +357,13 @@ func (f LinfFunctional) Value(fn Function) float64 {
 	return mx
 }
 
-// Численный интеграл по [a,b] (1D), усреднённый (трапеции)
+// Численный интеграл
 type IntegralFunctional struct {
 	A, B float64
 	N    int
 }
 
-func (f IntegralFunctional) Value(fn Function) float64 {
+func (f IntegralFunctional) Value(fn IFunction) float64 {
 	if f.N <= 0 {
 		f.N = 256
 	}
@@ -389,14 +382,14 @@ func (f IntegralFunctional) Value(fn Function) float64 {
 
 /********** ОПТИМИЗАТОРЫ **********/
 
-// 1) Имитация отжига (универсальный)
+// 1) Имитация отжига
 type Annealing struct {
 	Iter int
 	T0   float64
 	Step float64
 }
 
-func (a Annealing) Minimize(obj Functional, pf ParametricFunction, initial Vector, min, max Vector) Vector {
+func (a Annealing) Minimize(obj IFunctional, pf IParametricFunction, initial Vector, min, max Vector) Vector {
 	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
 	theta := initial.Copy()
 	best := theta.Copy()
@@ -416,7 +409,6 @@ func (a Annealing) Minimize(obj Functional, pf ParametricFunction, initial Vecto
 	n := len(theta)
 
 	for it := 0; it < maxInt(a.Iter, 2000); it++ {
-		// предложение
 		copy(next, theta)
 		for j := 0; j < n; j++ {
 			next[j] += (rng.Float64()*2 - 1) * step
@@ -443,13 +435,13 @@ func (a Annealing) Minimize(obj Functional, pf ParametricFunction, initial Vecto
 	return best
 }
 
-// 2) Градиентный спуск (требует DifferentiableFunctional)
+// 2) Градиентный спуск
 type GradDescent struct {
 	Iters int
 	LR    float64
 }
 
-func (gd GradDescent) Minimize(obj Functional, pf ParametricFunction, initial Vector, min, max Vector) Vector {
+func (gd GradDescent) Minimize(obj IFunctional, pf IParametricFunction, initial Vector, min, max Vector) Vector {
 	df, ok := obj.(DifferentiableFunctional)
 	if !ok {
 		panic("GradDescent requires DifferentiableFunctional")
@@ -462,8 +454,7 @@ func (gd GradDescent) Minimize(obj Functional, pf ParametricFunction, initial Ve
 	iters := maxInt(gd.Iters, 500)
 
 	for i := 0; i < iters; i++ {
-		// нужна DifferentiableFunction → пробуем связать с линейной/кусочно-линейной
-		fn, ok := pf.Bind(theta).(DifferentiableFunction)
+		fn, ok := pf.Bind(theta).(IDifferentiableFunction)
 		if !ok {
 			panic("bound function is not DifferentiableFunction")
 		}
@@ -482,13 +473,13 @@ func (gd GradDescent) Minimize(obj Functional, pf ParametricFunction, initial Ve
 	return theta
 }
 
-// 3) Гаусса-Ньютона (требует LeastSquaresFunctional)
+// 3) Гаусса-Ньютона
 type GaussNewton struct {
 	Iters int
 }
 
-func (gn GaussNewton) Minimize(obj Functional, pf ParametricFunction, initial Vector, min, max Vector) Vector {
-	ls, ok := obj.(LeastSquaresFunctional)
+func (gn GaussNewton) Minimize(obj IFunctional, pf IParametricFunction, initial Vector, min, max Vector) Vector {
+	ls, ok := obj.(ILeastSquaresFunctional)
 	if !ok {
 		panic("Gauss-Newton requires ILeastSquaresFunctional")
 	}
@@ -497,7 +488,7 @@ func (gn GaussNewton) Minimize(obj Functional, pf ParametricFunction, initial Ve
 
 	for k := 0; k < iters; k++ {
 		fn := pf.Bind(theta)
-		df, ok := fn.(DifferentiableFunction)
+		df, ok := fn.(IDifferentiableFunction)
 		if !ok {
 			panic("bound function is not DifferentiableFunction")
 		}
@@ -522,7 +513,6 @@ func (gn GaussNewton) Minimize(obj Functional, pf ParametricFunction, initial Ve
 				theta[i] = max[i]
 			}
 		}
-		// простая остановка
 		if math.Sqrt(Dot(delta, delta)) < 1e-8 {
 			break
 		}
@@ -533,7 +523,6 @@ func (gn GaussNewton) Minimize(obj Functional, pf ParametricFunction, initial Ve
 /********** ПРИМЕР ИСПОЛЬЗОВАНИЯ **********/
 
 func main() {
-	// Данные: y ≈ 2*x1 - 0.5*x2 + 1
 	data := Samples{
 		X: []Vector{
 			{0, 0}, {1, 0}, {0, 1}, {2, -1}, {3, 2},
@@ -541,12 +530,11 @@ func main() {
 		Y: Vector{1, 3, 0.5, 2*2 - 0.5*(-1) + 1, 2*3 - 0.5*2 + 1},
 	}
 
-	// Линейная модель в R^2 → параметры: [w1, w2, b]
 	fn := LinearN{n: 2}
 	fL2 := L2Functional{Data: data}
 
 	initial := Vector{0, 0, 0}
-	// 1) Гаусса-Ньютона (для LS)
+	// 1) Гаусса-Ньютона
 	thetaGN := (GaussNewton{Iters: 20}).Minimize(fL2, fn, initial, nil, nil)
 	fmt.Printf("Gauss-Newton:  theta = %.5v,  L2 = %.6f\n", thetaGN, fL2.Value(fn.Bind(thetaGN)))
 
@@ -554,7 +542,7 @@ func main() {
 	thetaGD := (GradDescent{Iters: 2000, LR: 0.05}).Minimize(fL2, fn, initial, nil, nil)
 	fmt.Printf("GradientDescent: theta = %.5v,  L2 = %.6f\n", thetaGD, fL2.Value(fn.Bind(thetaGD)))
 
-	// 3) Отжиг (универсальный)
+	// 3) Отжиг
 	thetaSA := (Annealing{Iter: 20000, T0: 1.0, Step: 0.2}).Minimize(fL2, fn, initial, nil, nil)
 	fmt.Printf("Annealing:      theta = %.5v,  L2 = %.6f\n", thetaSA, fL2.Value(fn.Bind(thetaSA)))
 
